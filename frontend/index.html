@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentMint — Free Mint for Agent ID Holders</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0b0e11; color: #eaecef; margin: 0; padding: 0; }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { color: #f0b90b; font-size: 2rem; margin: 0 0 4px; }
+  h1 span { color: #eaecef; }
+  .sub { color: #848e9c; margin: 0 0 24px; }
+  .card { background: #1e2329; border: 1px solid #2b3139; border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #2b3139; }
+  .row:last-child { border-bottom: none; }
+  .label { color: #848e9c; }
+  .ok { color: #2ebd85; font-weight: 600; }
+  .bad { color: #f6465d; font-weight: 600; }
+  button { background: #f0b90b; color: #0b0e11; border: none; border-radius: 8px; padding: 12px 20px; font-size: 1rem; font-weight: 700; cursor: pointer; width: 100%; }
+  button:disabled { background: #2b3139; color: #848e9c; cursor: not-allowed; }
+  button.secondary { background: transparent; color: #f0b90b; border: 1px solid #f0b90b; }
+  a { color: #f0b90b; }
+  .note { font-size: 0.85rem; color: #848e9c; }
+  #status { min-height: 1.2em; margin-top: 12px; }
+  .hidden { display: none; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.0/dist/ethers.umd.min.js"></script>
+</head>
+<body>
+<main>
+  <h1>Agent<span>Mint</span></h1>
+  <p class="sub">A free mint for Agent ID holders. One per holder. Price 0 — you only pay gas.</p>
+
+  <div class="card">
+    <div class="row"><span class="label">Network</span><span id="network">Not connected</span></div>
+    <div class="row"><span class="label">Your wallet</span><span id="wallet">—</span></div>
+    <div class="row"><span class="label">Agent ID held</span><span id="agentId">—</span></div>
+    <div class="row"><span class="label">Minted</span><span id="supply">—</span></div>
+    <div class="row"><span class="label">Your AgentMint</span><span id="owned">—</span></div>
+  </div>
+
+  <button id="connectBtn">Connect wallet</button>
+  <p style="height:8px"></p>
+  <button id="mintBtn" disabled>Mint your free AgentMint</button>
+  <p id="status"></p>
+
+  <div class="card">
+    <p class="note">
+      How it works: the contract checks on-chain whether your wallet holds an Agent ID
+      (SPACE ID Agent ID on BNB Chain). If it does, you can mint one AgentMint NFT for free.
+      The transaction is confirmed by you in your own wallet — nothing happens without your approval.
+    </p>
+    <p class="note">
+      Contract: <a id="contractLink" href="#" target="_blank" rel="noopener">not deployed yet</a><br>
+      Agent ID contract: <a href="https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F" target="_blank" rel="noopener">0x60B9…022F</a>
+    </p>
+    <p class="note">No returns are promised. This is a collectible for Agent ID holders, built for the Agent ID Hackathon.</p>
+  </div>
+</main>
+
+<script>
+// ---- Configuration ----
+// TODO (after mainnet deploy): replace with the deployed AgentMint contract address.
+const MINT_CONTRACT = "0x038Cb9B125915087FD980F995575CA105dDC9e6e";
+const AGENT_ID_CONTRACT = "0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F";
+const BSC_CHAIN_ID = 56;
+
+const AGENT_ID_ABI = ["function balanceOf(address owner) view returns (uint256)"];
+const MINT_ABI = [
+  "function mint() payable",
+  "function totalMinted() view returns (uint256)",
+  "function maxSupply() view returns (uint256)",
+  "function remaining() view returns (uint256)",
+  "function hasMinted(address) view returns (bool)",
+  "function balanceOf(address) view returns (uint256)"
+];
+
+let provider, signer, account, mintContract;
+
+const $ = (id) => document.getElementById(id);
+const short = (a) => a ? a.slice(0, 6) + "…" + a.slice(-4) : "—";
+
+async function refresh() {
+  if (!account) return;
+  const agentId = new ethers.Contract(AGENT_ID_CONTRACT, AGENT_ID_ABI, provider);
+  const holds = await agentId.balanceOf(account);
+  const isHolder = holds > 0n;
+  $("agentId").innerHTML = isHolder
+    ? `<span class="ok">Yes (${holds.toString()})</span>`
+    : `<span class="bad">No — an Agent ID is required to mint</span>`;
+
+  if (MINT_CONTRACT === "0x0000000000000000000000000000000000000000") {
+    $("supply").textContent = "Contract not deployed yet";
+    $("owned").textContent = "—";
+    $("mintBtn").disabled = true;
+    $("status").textContent = "The AgentMint contract is not deployed yet. Check back soon.";
+    return;
+  }
+
+  const total = await mintContract.totalMinted();
+  const max = await mintContract.maxSupply();
+  $("supply").textContent = `${total.toString()} / ${max.toString()}`;
+  const owned = await mintContract.balanceOf(account);
+  $("owned").textContent = owned > 0n ? `${owned.toString()} token(s)` : "None yet";
+  const already = await mintContract.hasMinted(account);
+  const soldOut = total >= max;
+
+  const btn = $("mintBtn");
+  if (soldOut) { btn.disabled = true; btn.textContent = "Sold out"; }
+  else if (already) { btn.disabled = true; btn.textContent = "Already minted"; }
+  else if (!isHolder) { btn.disabled = true; btn.textContent = "Mint your free AgentMint"; }
+  else { btn.disabled = false; btn.textContent = "Mint your free AgentMint"; }
+}
+
+$("connectBtn").addEventListener("click", async () => {
+  try {
+    if (!window.ethereum) { $("status").textContent = "No wallet found. Open this page in a browser with an in-browser wallet installed."; return; }
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    const net = await provider.getNetwork();
+    if (Number(net.chainId) !== BSC_CHAIN_ID) {
+      try {
+        await provider.send("wallet_switchEthereumChain", [{ chainId: "0x38" }]);
+      } catch (e) {
+        $("status").textContent = "Please switch your wallet to BNB Chain (chain ID 56) and reconnect.";
+        return;
+      }
+    }
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    mintContract = new ethers.Contract(MINT_CONTRACT, MINT_ABI, signer);
+    $("network").textContent = "BNB Chain (56)";
+    $("wallet").textContent = short(account);
+    $("connectBtn").textContent = "Connected: " + short(account);
+    $("contractLink").textContent = MINT_CONTRACT === "0x0000000000000000000000000000000000000000" ? "not deployed yet" : short(MINT_CONTRACT);
+    if (MINT_CONTRACT !== "0x0000000000000000000000000000000000000000") {
+      $("contractLink").href = "https://bscscan.com/address/" + MINT_CONTRACT;
+    }
+    await refresh();
+  } catch (e) {
+    $("status").textContent = "Connection failed: " + (e && e.message ? e.message : e);
+  }
+});
+
+$("mintBtn").addEventListener("click", async () => {
+  try {
+    $("mintBtn").disabled = true;
+    $("status").textContent = "Confirm the transaction in your wallet…";
+    const tx = await mintContract.mint({ value: 0 });
+    $("status").textContent = "Transaction sent: " + tx.hash + " — waiting for confirmation…";
+    const receipt = await tx.wait();
+    $("status").innerHTML = `Minted! <a href="https://bscscan.com/tx/${receipt.hash}" target="_blank" rel="noopener">View on BscScan</a>`;
+    await refresh();
+  } catch (e) {
+    $("status").textContent = "Mint failed or cancelled: " + (e && e.message ? e.message.slice(0, 200) : e);
+    await refresh();
+  }
+});
+
+if (window.ethereum) {
+  window.ethereum.on("accountsChanged", () => location.reload());
+  window.ethereum.on("chainChanged", () => location.reload());
+}
+</script>
+</body>
+</html>
