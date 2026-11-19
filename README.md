@@ -16,6 +16,9 @@ the minter holds an Agent ID. Supply 1000. Metadata is fully on-chain.
 
 ```bash
 export PATH="$HOME/.foundry/bin:$PATH"
+# Install dependencies (OpenZeppelin v5.7.0 + forge-std) — not vendored in this repo:
+forge install foundry-rs/forge-std
+forge install OpenZeppelin/openzeppelin-contracts@v5.7.0
 forge build
 forge test --fork-url https://bsc-rpc.publicnode.com --match-contract AgentMintTest
 ```
